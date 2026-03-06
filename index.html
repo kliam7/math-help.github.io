@@ -184,6 +184,21 @@
             margin: 15px 0;
         }
 
+        .nav-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .nav-btn {
+            border-radius: 8px;
+            padding: 10px 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
         select {
             width: 100%;
             padding: 12px 15px;
@@ -1139,6 +1154,12 @@
                     <input type="text" id="urlInput" placeholder="Enter website URL (e.g., https://example.com)">
                     <button id="browseBtn">Unblock</button>
                 </div>
+
+                <div class="nav-controls">
+                    <button class="btn-secondary nav-btn" id="backBtn" title="Go back"><i class="fas fa-arrow-left"></i> Back</button>
+                    <button class="btn-secondary nav-btn" id="forwardBtn" title="Go forward"><i class="fas fa-arrow-right"></i> Forward</button>
+                    <button class="btn-secondary nav-btn" id="reloadBtn" title="Reload current page"><i class="fas fa-rotate"></i> Reload</button>
+                </div>
                 
                 <div class="proxy-selector">
                     <select id="proxySelector">
@@ -1150,6 +1171,9 @@
                         <option value="corsanywhere">Cors Anywhere</option>
                         <option value="heroku">Heroku CORS</option>
                         <option value="crossorigin">CrossOrigin</option>
+                        <option value="codetabs">CodeTabs Proxy</option>
+                        <option value="thingproxy">ThingProxy</option>
+                        <option value="rjfun">RJFun Proxy</option>
                         <option value="proxy">Proxy Server</option>
                     </select>
                 </div>
@@ -1785,6 +1809,9 @@
                 <option value="corsanywhere">Cors Anywhere</option>
                 <option value="heroku">Heroku CORS</option>
                 <option value="crossorigin">CrossOrigin</option>
+                <option value="codetabs">CodeTabs Proxy</option>
+                <option value="thingproxy">ThingProxy</option>
+                <option value="rjfun">RJFun Proxy</option>
                 <option value="proxy">Proxy Server</option>
             </select>
         </div>
@@ -1973,6 +2000,9 @@
             const popularSitesBtn = document.getElementById('popularSitesBtn');
             const testProxiesBtn = document.getElementById('testProxiesBtn');
             const fullscreenBtn = document.getElementById('fullscreenBtn');
+            const backBtn = document.getElementById('backBtn');
+            const forwardBtn = document.getElementById('forwardBtn');
+            const reloadBtn = document.getElementById('reloadBtn');
             const quickAccessBtns = document.querySelectorAll('.btn-secondary[data-url]');
             const loader = document.getElementById('loader');
             const modal = document.getElementById('popularSitesModal');
@@ -2070,6 +2100,8 @@
                 { role: 'assistant', content: "Hello! I'm your AI assistant. How can I help you today?" }
             ];
             
+            const proxyOrder = ['ultra', 'stealth', 'corsproxy', 'allorigins', 'corsanywhere', 'heroku', 'crossorigin', 'codetabs', 'thingproxy', 'rjfun', 'proxy'];
+
             // Enhanced Proxy services
             const proxyServices = {
                 ultra: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
@@ -2079,7 +2111,15 @@
                 corsanywhere: (url) => `https://cors-anywhere.herokuapp.com/${url}`,
                 heroku: (url) => `https://cors-proxy.htmldriven.com/?url=${encodeURIComponent(url)}`,
                 crossorigin: (url) => `https://crossorigin.me/${url}`,
+                codetabs: (url) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
+                thingproxy: (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
+                rjfun: (url) => `https://r.jina.ai/http://${url.replace(/^https?:\/\//, '')}`,
                 proxy: (url) => `https://proxy.duckduckgo.com/iu/?u=${encodeURIComponent(url)}`
+            };
+
+            const navigationState = {
+                stack: [],
+                index: -1
             };
             
             // User agents for spoofing
@@ -2107,6 +2147,7 @@
             
             // Initialize
             setupEventListeners();
+            updateNavigationButtons();
             
             function setupEventListeners() {
                 browseBtn.addEventListener('click', browseWebsite);
@@ -2114,6 +2155,9 @@
                 popularSitesBtn.addEventListener('click', () => modal.style.display = 'block');
                 testProxiesBtn.addEventListener('click', testAllProxies);
                 fullscreenBtn.addEventListener('click', enterFullscreen);
+                backBtn.addEventListener('click', () => navigateHistory(-1));
+                forwardBtn.addEventListener('click', () => navigateHistory(1));
+                reloadBtn.addEventListener('click', reloadCurrentPage);
                 urlInput.addEventListener('keypress', function(e) {
                     if (e.key === 'Enter') browseWebsite();
                 });
@@ -2261,6 +2305,11 @@
                     }
                 });
                 
+                window.addEventListener('message', function(event) {
+                    if (!event.data || event.data.type !== 'proxyNavigate' || !event.data.url) return;
+                    navigateFromProxy(event.data.url);
+                });
+
                 // Intercept iframe attempts to open new windows
                 resultFrame.addEventListener('load', function() {
                     try {
@@ -2284,32 +2333,38 @@
                 });
             }
             
-            async function browseWebsite() {
-                const url = urlInput.value.trim();
+            async function browseWebsite(targetUrl = urlInput.value.trim(), options = {}) {
+                const url = targetUrl.trim();
                 if (!url) {
                     showStatus('Please enter a website URL', 'error');
                     return;
                 }
-                
+
                 showStatus('Connecting to proxy network...', 'success');
                 loader.style.display = 'block';
                 browseResult.style.display = 'none';
-                
-                // Add protocol if missing
-                let fullUrl = url;
-                if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                    fullUrl = 'https://' + url;
+
+                let fullUrl = normalizeUrl(url);
+                if (!fullUrl) {
+                    showStatus('Invalid URL. Please try again.', 'error');
+                    loader.style.display = 'none';
+                    return;
                 }
-                
-                // Force HTTPS if enabled
+
                 if (httpsToggle.checked) {
                     fullUrl = fullUrl.replace('http://', 'https://');
                 }
-                
+
+                urlInput.value = fullUrl;
+
                 const selectedProxy = proxySelector.value;
                 const selectedMethod = methodSelector.value;
-                
-                // Update session stats
+
+                if (!options.skipHistory) {
+                    pushToHistory(fullUrl);
+                }
+                updateNavigationButtons();
+
                 sessionData.sites++;
                 sessionData.currentUrl = fullUrl;
                 updateSessionStats();
@@ -2337,18 +2392,8 @@
                         // Display content in iframe
                         resultFrame.src = "about:blank";
                         
-                        // Modify HTML to prevent new tabs and fix frame-busting scripts
-                        if (blockTabsToggle.checked) {
-                            htmlContent = htmlContent.replace(/<a[^>]*target=["']_blank["'][^>]*>/gi, 
-                                function(match) {
-                                    return match.replace('target="_blank"', 'target="_self"');
-                                });
-                        }
-                        
-                        // Fix for TikTok and 9anime - remove frame-busting scripts
-                        htmlContent = htmlContent.replace(/<script[^>]*>[\s\S]*?window\.top[\s\S]*?<\/script>/gi, '');
-                        htmlContent = htmlContent.replace(/if\s*\(\s*window\s*!=\s*window\.top\s*\)/gi, 'if(false)');
-                        
+                        htmlContent = processProxiedHtml(htmlContent, fullUrl);
+
                         const blob = new Blob([htmlContent], { type: 'text/html' });
                         const blobUrl = URL.createObjectURL(blob);
                         resultFrame.src = blobUrl;
@@ -2366,7 +2411,7 @@
                         showStatus('First attempt failed, retrying with alternative method...', 'error');
                         try {
                             // Try with alternative proxy
-                            const htmlContent = await tryAllProxies(fullUrl);
+                            const htmlContent = processProxiedHtml(await tryAllProxies(fullUrl), fullUrl);
                             resultFrame.src = "about:blank";
                             const blob = new Blob([htmlContent], { type: 'text/html' });
                             const blobUrl = URL.createObjectURL(blob);
@@ -2451,7 +2496,7 @@
             }
             
             async function tryAllProxies(url) {
-                const proxyNames = ['ultra', 'stealth', 'corsproxy', 'allorigins', 'corsanywhere', 'heroku', 'crossorigin', 'proxy'];
+                const proxyNames = proxyOrder;
                 
                 for (let i = 0; i < proxyNames.length; i++) {
                     const proxyName = proxyNames[i];
@@ -2470,45 +2515,144 @@
             }
             
             async function fetchWithProxy(url, proxyName) {
-                const proxyUrl = proxyServices[proxyName](url);
-                
+                const service = proxyServices[proxyName];
+                if (!service) {
+                    throw new Error(`Unknown proxy: ${proxyName}`);
+                }
+
+                const proxyUrl = service(url);
                 const options = {};
-                
-                // Add headers for spoofing if enabled
+
                 if (userAgentToggle.checked) {
                     const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
                     options.headers = {
                         'User-Agent': randomUserAgent
                     };
                 }
-                
+
                 const response = await fetch(proxyUrl, options);
-                
                 if (!response.ok) {
                     throw new Error(`Proxy ${proxyName} returned ${response.status}`);
                 }
-                
-                // Update bytes transferred
-                const content = await response.text();
-                sessionData.bytes += content.length;
-                updateSessionStats();
-                
-                // Handle different proxy response formats
+
+                let content;
                 if (proxyName === 'allorigins') {
                     const data = await response.json();
-                    return data.contents;
+                    content = data.contents || '';
                 } else {
-                    return content;
+                    content = await response.text();
+                }
+
+                sessionData.bytes += content.length;
+                updateSessionStats();
+                return content;
+            }
+
+            function normalizeUrl(input) {
+                const trimmed = input.trim();
+                if (!trimmed) return '';
+
+                let candidate = trimmed;
+                if (!/^https?:\/\//i.test(candidate)) {
+                    candidate = `https://${candidate}`;
+                }
+
+                try {
+                    return new URL(candidate).toString();
+                } catch {
+                    return '';
                 }
             }
-            
+
+            function processProxiedHtml(htmlContent, baseUrl) {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(htmlContent, 'text/html');
+
+                let baseTag = doc.querySelector('base');
+                if (!baseTag) {
+                    baseTag = doc.createElement('base');
+                    const head = doc.head || doc.documentElement.insertBefore(doc.createElement('head'), doc.body || null);
+                    head.appendChild(baseTag);
+                }
+                baseTag.setAttribute('href', baseUrl);
+
+                if (blockTabsToggle.checked) {
+                    doc.querySelectorAll('a[target="_blank"]').forEach(link => {
+                        link.setAttribute('target', '_self');
+                    });
+                }
+
+                doc.querySelectorAll('script').forEach(script => {
+                    const content = script.textContent || '';
+                    if (/window\.top|window\.parent|top\.location/.test(content)) {
+                        script.remove();
+                    }
+                });
+
+                const navScript = doc.createElement('script');
+                navScript.textContent = `
+                    document.addEventListener('click', function(event) {
+                        const link = event.target.closest('a[href]');
+                        if (!link) return;
+                        const href = link.getAttribute('href');
+                        if (!href || href.startsWith('javascript:') || href.startsWith('#')) return;
+                        event.preventDefault();
+                        const nextUrl = new URL(href, window.location.href).toString();
+                        window.parent.postMessage({ type: 'proxyNavigate', url: nextUrl }, '*');
+                    });
+                `;
+                (doc.body || doc.documentElement).appendChild(navScript);
+
+                return '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+            }
+
+            function pushToHistory(url) {
+                if (!url) return;
+                if (navigationState.stack[navigationState.index] === url) return;
+                navigationState.stack = navigationState.stack.slice(0, navigationState.index + 1);
+                navigationState.stack.push(url);
+                navigationState.index = navigationState.stack.length - 1;
+            }
+
+            function navigateHistory(direction) {
+                const nextIndex = navigationState.index + direction;
+                if (nextIndex < 0 || nextIndex >= navigationState.stack.length) return;
+                navigationState.index = nextIndex;
+                const nextUrl = navigationState.stack[navigationState.index];
+                browseWebsite(nextUrl, { skipHistory: true });
+            }
+
+            function reloadCurrentPage() {
+                const currentUrl = navigationState.stack[navigationState.index] || urlInput.value;
+                if (!currentUrl) {
+                    showStatus('No page to reload yet', 'error');
+                    return;
+                }
+                browseWebsite(currentUrl, { skipHistory: true });
+            }
+
+            function navigateFromProxy(url) {
+                const normalized = normalizeUrl(url);
+                if (!normalized) {
+                    showStatus('Blocked invalid navigation target', 'error');
+                    return;
+                }
+                browseWebsite(normalized);
+            }
+
+            function updateNavigationButtons() {
+                backBtn.disabled = navigationState.index <= 0;
+                forwardBtn.disabled = navigationState.index === -1 || navigationState.index >= navigationState.stack.length - 1;
+                reloadBtn.disabled = navigationState.index === -1;
+            }
+
             async function testAllProxies() {
                 showStatus('Testing all proxy servers...', 'success');
                 proxyTestResults.style.display = 'block';
                 proxyTestResults.innerHTML = '<div class="proxy-result"><span class="proxy-name">Testing...</span><span class="proxy-status pending">Testing</span></div>';
                 
                 const testUrl = 'https://httpbin.org/get';
-                const proxyNames = ['ultra', 'stealth', 'corsproxy', 'allorigins', 'corsanywhere', 'heroku', 'crossorigin', 'proxy'];
+                const proxyNames = proxyOrder;
                 let workingProxies = 0;
                 let totalResponseTime = 0;
                 
